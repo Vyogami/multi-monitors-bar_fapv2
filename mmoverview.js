@@ -44,6 +44,32 @@ import * as Constants from './mmPanelConstants.js';
 // Re-export for backward compatibility
 export const setMMPanelArrayRef = Constants.setMMPanelArrayRef;
 
+function pruneStaleOverviewHiddenHandlers() {
+    try {
+        const hiddenIds = Main.overview?._signalConnectionsByName?.['hidden'];
+        if (!hiddenIds || !Array.isArray(hiddenIds))
+            return;
+        for (const id of [...hiddenIds]) {
+            const conn = Main.overview._signalConnections?.[id];
+            if (!conn || typeof conn.callback !== 'function')
+                continue;
+            try {
+                conn.callback();
+            } catch (err) {
+                const msg = String(err);
+                if (msg.includes('disposed') || msg.includes('layout_manager is null') || msg.includes('nPages')) {
+                    console.warn(`[MultiMonitors] Pruned dead overview hidden signal handler id ${id}`);
+                    try {
+                        Main.overview.disconnect(id);
+                    } catch (e) {}
+                }
+            }
+        }
+    } catch (e) {
+        // Safe fallback
+    }
+}
+
 export const THUMBNAILS_SLIDER_POSITION_ID = 'thumbnails-slider-position';
 
 class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
@@ -584,11 +610,39 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // Ensure scroll view is hidden by default
             this._appGridScrollView.visible = false;
 
-            this._appDisplay = null;
+            pruneStaleOverviewHiddenHandlers();
+            this._cleanAppDisplay();
             this._appDisplay = new AppDisplay.AppDisplay();
             this._appDisplay.visible = false;
             this._appDisplay.x_expand = true;
             this._appDisplay.y_expand = true;
+
+            // Auto-disconnect from Main.overview when this AppDisplay is destroyed
+            this._appDisplay.connect('destroy', () => {
+                if (this._appDisplay?._overviewHiddenId) {
+                    try {
+                        Main.overview.disconnect(this._appDisplay._overviewHiddenId);
+                    } catch (e) {}
+                    this._appDisplay._overviewHiddenId = 0;
+                }
+            });
+
+            // Safeguard goToPage against calls after or during actor disposal
+            const origGoToPage = this._appDisplay.goToPage?.bind(this._appDisplay);
+            if (origGoToPage) {
+                this._appDisplay.goToPage = (pageNumber, animate = true) => {
+                    if (this._destroying || !this._isActorUsable(this._appDisplay))
+                        return;
+                    if (!this._appDisplay._grid || !this._isActorUsable(this._appDisplay._grid))
+                        return;
+                    try {
+                        origGoToPage(pageNumber, animate);
+                    } catch (e) {
+                        // Actor already disposed or in teardown
+                    }
+                };
+            }
+
             this._configureNativeAppDisplayLayout();
 
             // Populate app grid with installed applications
@@ -974,22 +1028,40 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._syncAppGridState(searchText);
         }
 
+        _cleanAppDisplay() {
+            if (!this._appDisplay)
+                return;
+            const appDisplay = this._appDisplay;
+            this._appDisplay = null;
+            this._appDisplayVisible = false;
+
+            if (appDisplay._overviewHiddenId) {
+                try {
+                    Main.overview.disconnect(appDisplay._overviewHiddenId);
+                } catch (e) {}
+                appDisplay._overviewHiddenId = 0;
+            }
+
+            try {
+                appDisplay.destroy();
+            } catch (e) {}
+        }
+
         _refreshNativeAppDisplay() {
             if (!this._appDisplay)
                 return;
 
             this._configureNativeAppDisplayLayout();
             this._syncNativePageIndicatorsPosition();
-            if (this._appDisplay._redisplayWorkId)
+            if (this._appDisplay && this._appDisplay._redisplayWorkId)
                 Main.queueDeferredWork(this._appDisplay._redisplayWorkId);
-            else if (this._appDisplay._redisplay)
+            else if (this._appDisplay && this._appDisplay._redisplay)
                 this._appDisplay._redisplay();
         }
 
         _configureNativeAppDisplayLayout() {
             if (!this._isActorUsable(this._appDisplay)) {
-                this._appDisplay = null;
-                this._appDisplayVisible = false;
+                this._cleanAppDisplay();
                 return;
             }
 
@@ -1020,8 +1092,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
         _syncNativePageIndicatorsPosition() {
             if (!this._isActorUsable(this._appDisplay)) {
-                this._appDisplay = null;
-                this._appDisplayVisible = false;
+                this._cleanAppDisplay();
                 return;
             }
 
@@ -1030,8 +1101,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (!indicators || !monitor)
                 return;
             if (!this._isActorUsable(indicators)) {
-                this._appDisplay = null;
-                this._appDisplayVisible = false;
+                this._cleanAppDisplay();
                 return;
             }
 
@@ -1470,6 +1540,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._focusedApp = null;
             this._appSearchProvider = null;
             this._searchEntry = null;
+
+            this._cleanAppDisplay();
+            pruneStaleOverviewHiddenHandlers();
         }
 
         _monitorsChanged() {

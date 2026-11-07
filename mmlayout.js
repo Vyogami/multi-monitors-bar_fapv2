@@ -306,6 +306,7 @@ export class MultiMonitorsLayoutManager {
 	}
 
 	_registerPanelWithBlurMyShell(panel) {
+		console.log(`[multi-monitors-bar] Registering panel with Blur My Shell for monitor ${panel.monitorIndex ?? 'unknown'}`);
 		// Primary access path: BMS exposes itself via global.blur_my_shell
 		let panelBlur = null;
 
@@ -333,6 +334,20 @@ export class MultiMonitorsLayoutManager {
 			panelBlur.maybe_blur_panel(panel);
 		} else if (typeof panelBlur.blur_panel === 'function') {
 			panelBlur.blur_panel(panel);
+		}
+
+		// FIX: Ensure transparency class and size updates are applied even if BMS
+		// did not invoke connect_to_windows() after blurring this panel.
+		const actors = panelBlur.actors_list?.find(a => a.widgets.panel === panel);
+		if (actors) {
+			if (typeof panelBlur.set_should_override_panel === 'function') {
+				panelBlur.set_should_override_panel(actors, true);
+			}
+			if (typeof panelBlur.update_size === 'function') {
+				panelBlur.update_size(actors);
+			}
+		} else {
+			panel.add_style_class_name('transparent-panel');
 		}
 	}
 
@@ -643,6 +658,8 @@ export class MultiMonitorsLayoutManager {
 		if (i === Main.layoutManager.primaryIndex) {
 			return;
 		}
+
+		console.log(`[multi-monitors-bar] _pushPanel: Creating panel for secondary monitor ${i} (${monitor.width}x${monitor.height}+${monitor.x}+${monitor.y})`);
 
 		const key = monitorKey(global.display, i, Main.layoutManager.primaryIndex);
 		let mmPanelBox = new MultiMonitorsPanelBox(monitor, panelPosition(this._settings, key));

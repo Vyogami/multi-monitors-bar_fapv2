@@ -442,6 +442,9 @@ export default class MultiMonitorsExtension extends Extension {
 		MMLayout.setMMPanelArrayRef(mmPanel);
 		MMPanel.setMMPanelArrayRef(mmPanel);
 		MMOverview.setMMPanelArrayRef(mmPanel);
+		globalThis.mmPanel = mmPanel;
+		if (Main.layoutManager)
+			Main.layoutManager.mmPanel = mmPanel;
 
 		mmLayoutManager = new MMLayout.MultiMonitorsLayoutManager(this._settings);
 
@@ -490,6 +493,12 @@ export default class MultiMonitorsExtension extends Extension {
 	}
 
 	disable() {
+		if (globalThis.mmPanel === mmPanel) {
+			delete globalThis.mmPanel;
+		}
+		if (Main.layoutManager?.mmPanel === mmPanel) {
+			delete Main.layoutManager.mmPanel;
+		}
 		this._monitorIndicators?.destroy();
 		this._monitorIndicators = null;
 		this._destroyPrimaryDock();
@@ -693,6 +702,9 @@ export default class MultiMonitorsExtension extends Extension {
 		MMLayout.setMMPanelArrayRef(mmPanel);
 		MMPanel.setMMPanelArrayRef(mmPanel);
 		MMOverview.setMMPanelArrayRef(mmPanel);
+		globalThis.mmPanel = mmPanel;
+		if (Main.layoutManager)
+			Main.layoutManager.mmPanel = mmPanel;
 
 		mmLayoutManager.showPanel();
 		this._hideThumbnailsSlider();
